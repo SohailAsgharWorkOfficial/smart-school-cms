@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function role() { return isSignedIn() ? userDoc().data.role : null; }
+    function isAdmin() { return role() == "admin"; }
+    function isTeacher() { return role() == "teacher"; }
+    function isStudent() { return role() == "student"; }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.role in ["teacher", "student"] &&
+        request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /teachers/{teacherId} {
+      allow create: if isAdmin() || (isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        teacherId == request.auth.uid);
+      allow read: if isAdmin() || (isTeacher() && userDoc().data.linkedProfileId == teacherId);
+      allow update, delete: if isAdmin();
+    }
+
+    match /students/{studentId} {
+      allow create: if isAdmin() || (isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        studentId == request.auth.uid);
+      allow read: if isAdmin() || (isStudent() && userDoc().data.linkedProfileId == studentId) || isTeacher();
+      allow update, delete: if isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if isAdmin() ||
+        (isTeacher() && resource.data.teacherId == userDoc().data.linkedProfileId) ||
+        (isStudent() && resource.data.studentId == userDoc().data.linkedProfileId);
+      allow create, update: if isAdmin() ||
+        (isTeacher() && request.resource.data.teacherId == userDoc().data.linkedProfileId);
+      allow delete: if isAdmin();
+    }
+
+    match /results/{resultId} {
+      allow read: if isAdmin() ||
+        (isTeacher() && resource.data.teacherId == userDoc().data.linkedProfileId) ||
+        (isStudent() && resource.data.studentId == userDoc().data.linkedProfileId);
+      allow create, update: if isAdmin() ||
+        (isTeacher() && request.resource.data.teacherId == userDoc().data.linkedProfileId);
+      allow delete: if isAdmin();
+    }
+
+    match /school/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

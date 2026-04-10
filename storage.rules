@@ -1,0 +1,55 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return isSignedIn() ? userDoc().data.role : null;
+    }
+
+    function isAdmin() {
+      return role() == "admin";
+    }
+
+    function isTeacher() {
+      return role() == "teacher";
+    }
+
+    function isStudent() {
+      return role() == "student";
+    }
+
+    match /profiles/{userId}/{allPaths=**} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow write: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    match /school-records/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /teacher-uploads/{teacherId}/{allPaths=**} {
+      allow read: if isAdmin() || (isTeacher() && userDoc().data.linkedProfileId == teacherId);
+      allow write: if isAdmin() || (isTeacher() && userDoc().data.linkedProfileId == teacherId);
+    }
+
+    match /student-uploads/{studentId}/{allPaths=**} {
+      allow read: if isAdmin() ||
+        (isStudent() && userDoc().data.linkedProfileId == studentId) ||
+        isTeacher();
+      allow write: if isAdmin() ||
+        (isStudent() && userDoc().data.linkedProfileId == studentId);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
