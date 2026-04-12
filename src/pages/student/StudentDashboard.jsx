@@ -1,27 +1,57 @@
+import { useMemo, useState } from "react";
+import AttendanceCalendar from "../../components/shared/AttendanceCalendar";
 import PageHeader from "../../components/shared/PageHeader";
+import ReportCard from "../../components/shared/ReportCard";
 import Spinner from "../../components/shared/Spinner";
 import StatCard from "../../components/shared/StatCard";
 import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
+import { RESULT_ASSESSMENTS } from "../../utils/constants";
 
 function StudentDashboard() {
   const { userProfile } = useAuth();
   const students = useCollection(COLLECTIONS.STUDENTS);
   const classes = useCollection(COLLECTIONS.CLASSES);
   const assignments = useCollection(COLLECTIONS.ASSIGNMENTS);
+  const subjects = useCollection(COLLECTIONS.SUBJECTS);
+  const teachers = useCollection(COLLECTIONS.TEACHERS);
   const attendance = useCollection(COLLECTIONS.ATTENDANCE);
   const results = useCollection(COLLECTIONS.RESULTS);
+  const [assessmentType, setAssessmentType] = useState("midterm");
 
-  if ([students.loading, classes.loading, assignments.loading, attendance.loading, results.loading].some(Boolean)) {
+  const student = useMemo(
+    () => students.data.find((item) => item.id === userProfile?.linkedProfileId),
+    [students.data, userProfile?.linkedProfileId],
+  );
+  const currentClass = useMemo(
+    () => classes.data.find((item) => item.id === student?.classId),
+    [classes.data, student?.classId],
+  );
+  const myAssignments = useMemo(
+    () => assignments.data.filter((item) => item.classId === student?.classId),
+    [assignments.data, student?.classId],
+  );
+  const myAttendance = useMemo(
+    () => attendance.data.filter((item) => item.studentId === student?.id),
+    [attendance.data, student?.id],
+  );
+  const myResults = useMemo(
+    () => results.data.filter((item) => item.studentId === student?.id),
+    [results.data, student?.id],
+  );
+
+  const attendanceCalendarRecords = useMemo(() => {
+    return myAttendance.map((entry) => {
+      const subjectName = subjects.data.find((item) => item.id === entry.subjectId)?.name ?? "N/A";
+      const className = currentClass ? `${currentClass.name} - ${currentClass.section}` : "N/A";
+      return { ...entry, subjectName, className };
+    });
+  }, [currentClass, myAttendance, subjects.data]);
+
+  if ([students.loading, classes.loading, assignments.loading, subjects.loading, teachers.loading, attendance.loading, results.loading].some(Boolean)) {
     return <Spinner label="Loading student dashboard..." />;
   }
-
-  const student = students.data.find((item) => item.id === userProfile?.linkedProfileId);
-  const currentClass = classes.data.find((item) => item.id === student?.classId);
-  const myAssignments = assignments.data.filter((item) => item.classId === student?.classId);
-  const myAttendance = attendance.data.filter((item) => item.studentId === student?.id);
-  const myResults = results.data.filter((item) => item.studentId === student?.id);
 
   return (
     <div className="content-grid">
@@ -51,6 +81,47 @@ function StudentDashboard() {
           </ul>
         </article>
       </section>
+
+      <article className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>My Attendance Calendar</h3>
+            <p className="helper-text">Monthly attendance view for your records.</p>
+          </div>
+        </div>
+        <AttendanceCalendar records={attendanceCalendarRecords} emptyLabel="No attendance records for this month." />
+      </article>
+
+      <article className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>My Report Card</h3>
+            <p className="helper-text">Midterm and Final Term marks from all your subjects.</p>
+          </div>
+          <div className="button-row">
+            {RESULT_ASSESSMENTS.map((option) => (
+              <button
+                key={option.value}
+                className={`button ${assessmentType === option.value ? "primary" : "secondary"}`}
+                type="button"
+                onClick={() => setAssessmentType(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <ReportCard
+          student={student}
+          classItem={currentClass}
+          assignments={assignments.data}
+          subjects={subjects.data}
+          teachers={teachers.data}
+          results={results.data}
+          assessmentType={assessmentType}
+        />
+      </article>
     </div>
   );
 }

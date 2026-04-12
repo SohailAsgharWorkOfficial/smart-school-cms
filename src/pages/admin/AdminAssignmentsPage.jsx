@@ -19,10 +19,19 @@ function AdminAssignmentsPage() {
   const teachers = useCollection(COLLECTIONS.TEACHERS);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm({ defaultValues });
+  const { register, handleSubmit, reset, watch, formState: { errors, isSubmitting } } = useForm({ defaultValues });
 
   const classOptions = useMemo(() => classes.data.map((item) => ({ value: item.id, label: `${item.name} - ${item.section}` })), [classes.data]);
-  const subjectOptions = useMemo(() => subjects.data.map((item) => ({ value: item.id, label: `${item.name} (${item.code})` })), [subjects.data]);
+  const selectedClassId = watch("classId");
+  const subjectOptions = useMemo(() => {
+    const filtered = subjects.data.filter((subject) => {
+      if (!selectedClassId) return true;
+      const classIds = Array.isArray(subject.classIds) ? subject.classIds : [];
+      if (!classIds.length) return true;
+      return classIds.includes(selectedClassId);
+    });
+    return filtered.map((item) => ({ value: item.id, label: `${item.name} (${item.code})` }));
+  }, [selectedClassId, subjects.data]);
   const teacherOptions = useMemo(() => teachers.data.map((item) => ({ value: item.id, label: `${item.firstName} ${item.lastName}` })), [teachers.data]);
 
   const openCreate = () => {

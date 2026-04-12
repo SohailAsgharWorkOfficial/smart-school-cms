@@ -18,6 +18,11 @@ export const ROLES = {
 
 export const ATTENDANCE_OPTIONS = ["present", "absent", "late", "excused"];
 
+export const RESULT_ASSESSMENTS = [
+  { value: "midterm", label: "Midterm" },
+  { value: "final", label: "Final Term" },
+];
+
 export const ROLE_NAVIGATION = {
   admin: [
     { to: "/admin", label: "Dashboard", icon: LayoutDashboard },

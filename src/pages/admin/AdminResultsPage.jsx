@@ -5,6 +5,7 @@ import StatusBadge from "../../components/shared/StatusBadge";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
 import { gradeFromScore } from "../../utils/formatters";
+import { assessmentLabel, getAssessmentType } from "../../utils/results";
 
 function AdminResultsPage() {
   const results = useCollection(COLLECTIONS.RESULTS);
@@ -30,8 +31,8 @@ function AdminResultsPage() {
             },
           },
           { key: "subjectId", label: "Subject", render: (row) => subjects.data.find((item) => item.id === row.subjectId)?.name ?? "N/A" },
-          { key: "examName", label: "Assessment" },
-          { key: "term", label: "Term" },
+          { key: "assessment", label: "Assessment", render: (row) => assessmentLabel(getAssessmentType(row)) },
+          { key: "schoolYear", label: "School Year", render: (row) => row.schoolYear ?? row.term ?? "N/A" },
           { key: "score", label: "Score", render: (row) => `${row.score}/${row.totalMarks}` },
           {
             key: "grade",

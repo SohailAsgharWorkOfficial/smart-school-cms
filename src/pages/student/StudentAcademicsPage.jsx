@@ -6,6 +6,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
 import { gradeFromScore } from "../../utils/formatters";
+import { assessmentLabel, getAssessmentType } from "../../utils/results";
 
 function StudentAcademicsPage() {
   const { userProfile } = useAuth();
@@ -75,8 +76,8 @@ function StudentAcademicsPage() {
         <DataTable
           columns={[
             { key: "subjectName", label: "Subject" },
-            { key: "examName", label: "Assessment" },
-            { key: "term", label: "Term" },
+            { key: "assessment", label: "Assessment", render: (row) => assessmentLabel(getAssessmentType(row)) },
+            { key: "schoolYear", label: "School Year", render: (row) => row.schoolYear ?? row.term ?? "N/A" },
             { key: "score", label: "Score", render: (row) => `${row.score}/${row.totalMarks}` },
             { key: "grade", label: "Grade", render: (row) => <StatusBadge status={gradeFromScore(row.score, row.totalMarks)} type={Number(row.score) / Number(row.totalMarks) >= 0.5 ? "success" : "danger"} /> },
           ]}

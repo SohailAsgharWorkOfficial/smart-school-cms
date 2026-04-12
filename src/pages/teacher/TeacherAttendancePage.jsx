@@ -1,6 +1,6 @@
-import { useForm } from "react-hook-form";
+import { useMemo, useState } from "react";
 import { toast } from "react-toastify";
-import FormField from "../../components/forms/FormField";
+import AttendanceCalendar from "../../components/shared/AttendanceCalendar";
 import DataTable from "../../components/shared/DataTable";
 import PageHeader from "../../components/shared/PageHeader";
 import Spinner from "../../components/shared/Spinner";
@@ -8,9 +8,9 @@ import StatusBadge from "../../components/shared/StatusBadge";
 import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
-import { createRecord, updateRecord } from "../../services/firestoreService";
 import { ATTENDANCE_OPTIONS } from "../../utils/constants";
 import { formatDate } from "../../utils/formatters";
+import { createRecord } from "../../services/firestoreService";
 
 function TeacherAttendancePage() {
   const { userProfile } = useAuth();
@@ -19,70 +19,156 @@ function TeacherAttendancePage() {
   const students = useCollection(COLLECTIONS.STUDENTS);
   const subjects = useCollection(COLLECTIONS.SUBJECTS);
   const attendance = useCollection(COLLECTIONS.ATTENDANCE);
-  const { register, handleSubmit, watch, reset, formState: { errors, isSubmitting } } = useForm({
-    defaultValues: { assignmentId: "", studentId: "", date: "", status: "present" },
-  });
+  const [assignmentId, setAssignmentId] = useState("");
+  const [dateValue, setDateValue] = useState("");
+  const [statusMap, setStatusMap] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  if ([assignments.loading, classes.loading, students.loading, subjects.loading, attendance.loading].some(Boolean)) {
-    return <Spinner label="Loading attendance workspace..." />;
-  }
+  const loading = [assignments.loading, classes.loading, students.loading, subjects.loading, attendance.loading].some(Boolean);
 
   const myAssignments = assignments.data.filter((item) => item.teacherId === userProfile?.linkedProfileId);
-  const assignmentOptions = myAssignments.map((item) => {
-    const classItem = classes.data.find((classValue) => classValue.id === item.classId);
-    const subject = subjects.data.find((subjectValue) => subjectValue.id === item.subjectId);
-    return { value: item.id, label: `${classItem?.name ?? item.classId} ${classItem?.section ?? ""} - ${subject?.name ?? item.subjectId}` };
-  });
-  const selectedAssignment = myAssignments.find((item) => item.id === watch("assignmentId"));
-  const enrolledStudents = students.data
-    .filter((item) => item.classId === selectedAssignment?.classId)
-    .sort((left, right) => `${left.firstName} ${left.lastName}`.localeCompare(`${right.firstName} ${right.lastName}`));
-  const studentOptions = enrolledStudents
-    .map((item) => ({ value: item.id, label: `${item.firstName} ${item.lastName} (${item.rollNumber})` }));
-  const statusOptions = ATTENDANCE_OPTIONS.map((option) => ({ value: option, label: option }));
+  const assignmentOptions = useMemo(() => {
+    return myAssignments
+      .map((item) => {
+        const classItem = classes.data.find((classValue) => classValue.id === item.classId);
+        const subject = subjects.data.find((subjectValue) => subjectValue.id === item.subjectId);
+        return { value: item.id, label: `${classItem?.name ?? item.classId} ${classItem?.section ?? ""} - ${subject?.name ?? item.subjectId}` };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [classes.data, myAssignments, subjects.data]);
 
-  const onSubmit = async (values) => {
+  const effectiveAssignmentId = assignmentId || assignmentOptions[0]?.value || "";
+  const selectedAssignment = myAssignments.find((item) => item.id === effectiveAssignmentId);
+  const enrolledStudents = useMemo(() => {
+    return students.data
+      .filter((item) => item.classId === selectedAssignment?.classId)
+      .slice()
+      .sort((left, right) => `${left.firstName} ${left.lastName}`.localeCompare(`${right.firstName} ${right.lastName}`));
+  }, [selectedAssignment?.classId, students.data]);
+
+  const statusOptions = useMemo(() => ATTENDANCE_OPTIONS.map((option) => ({ value: option, label: option })), []);
+
+  const statusTypeFor = (status) => (status === "present" ? "success" : status === "late" ? "warning" : status === "absent" ? "danger" : "info");
+
+  const existingForSelectedDate = useMemo(() => {
+    if (!selectedAssignment || !dateValue) return [];
+    return attendance.data.filter(
+      (item) =>
+        item.teacherId === userProfile?.linkedProfileId &&
+        item.classId === selectedAssignment.classId &&
+        item.subjectId === selectedAssignment.subjectId &&
+        item.date === dateValue,
+    );
+  }, [attendance.data, dateValue, selectedAssignment, userProfile?.linkedProfileId]);
+
+  const loadStatusMap = (nextAssignmentId, nextDate) => {
+    const nextAssignment = myAssignments.find((item) => item.id === nextAssignmentId);
+    if (!nextAssignment || !nextDate) return {};
+    const roster = students.data.filter((item) => item.classId === nextAssignment.classId);
+    const existing = attendance.data.filter(
+      (item) =>
+        item.teacherId === userProfile?.linkedProfileId &&
+        item.classId === nextAssignment.classId &&
+        item.subjectId === nextAssignment.subjectId &&
+        item.date === nextDate,
+    );
+    const existingMap = existing.reduce((acc, entry) => {
+      acc[entry.studentId] = entry.status;
+      return acc;
+    }, {});
+
+    return roster.reduce((acc, student) => {
+      acc[student.id] = existingMap[student.id] ?? "present";
+      return acc;
+    }, {});
+  };
+
+  const handleAssignmentChange = (nextValue) => {
+    setAssignmentId(nextValue);
+    setStatusMap(loadStatusMap(nextValue, dateValue));
+  };
+
+  const handleDateChange = (nextValue) => {
+    setDateValue(nextValue);
+    setStatusMap(loadStatusMap(effectiveAssignmentId, nextValue));
+  };
+
+  const setAllStatuses = (status) => {
+    if (!enrolledStudents.length) return;
+    setStatusMap(
+      enrolledStudents.reduce((acc, student) => {
+        acc[student.id] = status;
+        return acc;
+      }, {}),
+    );
+  };
+
+  const saveBulkAttendance = async () => {
     try {
-      const assignment = myAssignments.find((item) => item.id === values.assignmentId);
-      if (!assignment) return toast.error("Select a valid assigned class and subject");
+      if (!selectedAssignment) return toast.error("Select a valid assigned class and subject");
+      if (!dateValue) return toast.error("Select an attendance date");
+      if (!enrolledStudents.length) return toast.error("No students enrolled in this class");
 
-      const existingEntry = attendance.data.find(
-        (item) =>
-          item.studentId === values.studentId &&
-          item.subjectId === assignment.subjectId &&
-          item.classId === assignment.classId &&
-          item.date === values.date,
-      );
-      const payload = {
-        studentId: values.studentId,
-        classId: assignment.classId,
-        subjectId: assignment.subjectId,
-        teacherId: userProfile?.linkedProfileId,
-        date: values.date,
-        status: values.status,
-      };
+      setSaving(true);
+      const writes = enrolledStudents.map((student) => {
+        const status = statusMap[student.id] ?? "present";
+        const payload = {
+          studentId: student.id,
+          classId: selectedAssignment.classId,
+          subjectId: selectedAssignment.subjectId,
+          teacherId: userProfile?.linkedProfileId,
+          date: dateValue,
+          status,
+        };
+        const customId = `attendance-${student.id}-${selectedAssignment.classId}-${selectedAssignment.subjectId}-${dateValue}`;
+        return createRecord(COLLECTIONS.ATTENDANCE, payload, customId);
+      });
 
-      if (existingEntry) {
-        await updateRecord(COLLECTIONS.ATTENDANCE, existingEntry.id, payload);
-        toast.success("Attendance updated");
-      } else {
-        await createRecord(COLLECTIONS.ATTENDANCE, payload);
-        toast.success("Attendance marked");
-      }
-
-      reset({ assignmentId: values.assignmentId, studentId: "", date: "", status: "present" });
+      await Promise.all(writes);
+      toast.success(`Saved attendance for ${enrolledStudents.length} students`);
     } catch (error) {
       toast.error(error.message);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const myAttendanceRows = attendance.data
-    .filter((item) => item.teacherId === userProfile?.linkedProfileId)
-    .map((entry) => {
-      const student = students.data.find((item) => item.id === entry.studentId);
-      const subject = subjects.data.find((item) => item.id === entry.subjectId);
-      return { ...entry, studentName: student ? `${student.firstName} ${student.lastName}` : "N/A", subjectName: subject?.name ?? "N/A" };
-    });
+  const assignmentCalendarRecords = useMemo(() => {
+    if (!selectedAssignment) return [];
+    const classItem = classes.data.find((item) => item.id === selectedAssignment.classId);
+    const subjectName = subjects.data.find((item) => item.id === selectedAssignment.subjectId)?.name ?? "N/A";
+    const className = classItem ? `${classItem.name} - ${classItem.section}` : "N/A";
+    return attendance.data
+      .filter(
+        (item) =>
+          item.teacherId === userProfile?.linkedProfileId &&
+          item.classId === selectedAssignment.classId &&
+          item.subjectId === selectedAssignment.subjectId,
+      )
+      .map((entry) => {
+        const student = students.data.find((item) => item.id === entry.studentId);
+        return {
+          ...entry,
+          className,
+          subjectName,
+          studentName: student ? `${student.firstName} ${student.lastName}` : "N/A",
+        };
+      });
+  }, [attendance.data, classes.data, selectedAssignment, students.data, subjects.data, userProfile?.linkedProfileId]);
+
+  const myAttendanceRows = useMemo(() => {
+    return attendance.data
+      .filter((item) => item.teacherId === userProfile?.linkedProfileId)
+      .map((entry) => {
+        const student = students.data.find((item) => item.id === entry.studentId);
+        const subject = subjects.data.find((item) => item.id === entry.subjectId);
+        return { ...entry, studentName: student ? `${student.firstName} ${student.lastName}` : "N/A", subjectName: subject?.name ?? "N/A" };
+      });
+  }, [attendance.data, students.data, subjects.data, userProfile?.linkedProfileId]);
+
+  if (loading) {
+    return <Spinner label="Loading attendance workspace..." />;
+  }
 
   return (
     <div className="content-grid">
@@ -90,24 +176,86 @@ function TeacherAttendancePage() {
 
       <section className="split-grid">
         <article className="panel">
-          <h3>Mark Attendance</h3>
-          <form className="content-grid" onSubmit={handleSubmit(onSubmit)}>
+          <h3>Bulk Mark Attendance</h3>
+          <div className="content-grid">
             <div className="form-grid">
-              <FormField label="Assignment" name="assignmentId" type="select" register={register} errors={errors} options={assignmentOptions} rules={{ required: "Assignment is required" }} />
-              <FormField label="Student" name="studentId" type="select" register={register} errors={errors} options={studentOptions} rules={{ required: "Student is required" }} />
-              <FormField label="Date" name="date" type="date" register={register} errors={errors} rules={{ required: "Date is required" }} />
-              <FormField label="Status" name="status" type="select" register={register} errors={errors} options={statusOptions} rules={{ required: "Status is required" }} />
+              <div className="form-group">
+                <label htmlFor="assignmentId">Assignment</label>
+                <select id="assignmentId" value={effectiveAssignmentId} onChange={(event) => handleAssignmentChange(event.target.value)}>
+                  {assignmentOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="attendance-date">Date</label>
+                <input id="attendance-date" type="date" value={dateValue} onChange={(event) => handleDateChange(event.target.value)} />
+              </div>
             </div>
-            <button className="button primary" type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving..." : "Save Attendance"}</button>
-          </form>
+
+            <div className="button-row">
+              <button className="button secondary" type="button" onClick={() => setAllStatuses("present")} disabled={!dateValue || !enrolledStudents.length}>All Present</button>
+              <button className="button secondary" type="button" onClick={() => setAllStatuses("absent")} disabled={!dateValue || !enrolledStudents.length}>All Absent</button>
+              <button className="button ghost" type="button" onClick={() => setStatusMap(loadStatusMap(effectiveAssignmentId, dateValue))} disabled={!dateValue || !enrolledStudents.length}>Reload</button>
+              <button className="button primary" type="button" onClick={saveBulkAttendance} disabled={saving || !dateValue || !enrolledStudents.length}>
+                {saving ? "Saving..." : "Save All"}
+              </button>
+            </div>
+
+            {dateValue && enrolledStudents.length ? (
+              <div className="table-wrap">
+                <table className="attendance-roster">
+                  <thead>
+                    <tr>
+                      <th>Student</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enrolledStudents.map((student) => (
+                      <tr key={student.id}>
+                        <td>{student.firstName} {student.lastName} <span className="muted-text">({student.rollNumber})</span></td>
+                        <td>
+                          <select
+                            className="attendance-inline-select"
+                            value={statusMap[student.id] ?? "present"}
+                            onChange={(event) => setStatusMap((prev) => ({ ...prev, [student.id]: event.target.value }))}
+                          >
+                            {statusOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="highlight-card">
+                <strong>{dateValue ? "No students enrolled in this class yet" : "Select a date first"}</strong>
+                <p className="helper-text">
+                  {dateValue
+                    ? "Ask admin to assign students to this class. Once roster exists, you can mark attendance in one click."
+                    : "Pick a date to load your class roster and mark everyone at once."}
+                </p>
+              </div>
+            )}
+
+            {existingForSelectedDate.length ? (
+              <p className="helper-text">
+                Found <strong>{existingForSelectedDate.length}</strong> existing record(s) for this date. Saving will update them (no duplicates).
+              </p>
+            ) : null}
+          </div>
         </article>
 
         <article className="panel">
           <h3>Rule Enforcement</h3>
           <ul className="list-reset content-grid">
-            <li>Only your own `assignments` are available in the form.</li>
-            <li>Student dropdown is derived from the selected assigned class.</li>
-            <li>Existing attendance entries are updated instead of duplicated for the same date.</li>
+            <li>Only your own `assignments` are available.</li>
+            <li>Roster is auto-derived from the selected assignment's class.</li>
+            <li>Saving uses a deterministic record ID per student/date to prevent duplicates.</li>
           </ul>
           {selectedAssignment ? (
             enrolledStudents.length ? (
@@ -136,6 +284,24 @@ function TeacherAttendancePage() {
           )}
         </article>
       </section>
+
+      <article className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Class Attendance Calendar</h3>
+            <p className="helper-text">Monthly view for your selected class-subject attendance.</p>
+          </div>
+        </div>
+        <AttendanceCalendar
+          records={assignmentCalendarRecords}
+          emptyLabel="No attendance records for this assignment in this month."
+          detailColumns={[
+            { key: "studentName", label: "Student", render: (row) => row.studentName ?? "N/A" },
+            { key: "status", label: "Status", render: (row) => <StatusBadge status={row.status} type={statusTypeFor(row.status)} /> },
+          ]}
+          sortComparator={(a, b) => `${a.studentName ?? ""}`.localeCompare(`${b.studentName ?? ""}`)}
+        />
+      </article>
 
       <DataTable
         columns={[
