@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { query, where } from "firebase/firestore";
 import AttendanceCalendar from "../../components/shared/AttendanceCalendar";
 import PageHeader from "../../components/shared/PageHeader";
 import Spinner from "../../components/shared/Spinner";
@@ -6,6 +7,7 @@ import StatCard from "../../components/shared/StatCard";
 import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
+import { resolveLinkedProfileId } from "../../utils/profile";
 
 function TeacherDashboard() {
   const { userProfile } = useAuth();
@@ -13,25 +15,32 @@ function TeacherDashboard() {
   const classes = useCollection(COLLECTIONS.CLASSES);
   const students = useCollection(COLLECTIONS.STUDENTS);
   const subjects = useCollection(COLLECTIONS.SUBJECTS);
-  const attendance = useCollection(COLLECTIONS.ATTENDANCE);
-  const results = useCollection(COLLECTIONS.RESULTS);
   const [selectedClassId, setSelectedClassId] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState("");
 
+  const teacherUid = userProfile?.uid || userProfile?.id || null;
+  const teacherScopeId = resolveLinkedProfileId(userProfile);
+
+  const myAttendanceQuery = useCallback(
+    (ref) => query(ref, where("teacherId", "==", teacherScopeId || "__none__")),
+    [teacherScopeId],
+  );
+  const myResultsQuery = useCallback(
+    (ref) => query(ref, where("teacherId", "==", teacherScopeId || "__none__")),
+    [teacherScopeId],
+  );
+
   const myAssignments = useMemo(
-    () => assignments.data.filter((item) => item.teacherId === userProfile?.linkedProfileId),
-    [assignments.data, userProfile?.linkedProfileId],
+    () => assignments.data.filter((item) => (teacherUid && item.teacherUserId === teacherUid) || (teacherScopeId && item.teacherId === teacherScopeId)),
+    [assignments.data, teacherScopeId, teacherUid],
   );
   const myClassIds = useMemo(() => [...new Set(myAssignments.map((item) => item.classId))], [myAssignments]);
   const myStudents = useMemo(() => students.data.filter((item) => myClassIds.includes(item.classId)), [myClassIds, students.data]);
-  const myAttendance = useMemo(
-    () => attendance.data.filter((item) => item.teacherId === userProfile?.linkedProfileId),
-    [attendance.data, userProfile?.linkedProfileId],
-  );
-  const myResults = useMemo(
-    () => results.data.filter((item) => item.teacherId === userProfile?.linkedProfileId),
-    [results.data, userProfile?.linkedProfileId],
-  );
+  const attendanceForTeacher = useCollection(COLLECTIONS.ATTENDANCE, myAttendanceQuery);
+  const resultsForTeacher = useCollection(COLLECTIONS.RESULTS, myResultsQuery);
+
+  const myAttendance = attendanceForTeacher.data;
+  const myResults = resultsForTeacher.data;
 
   const classOptions = useMemo(() => {
     return myClassIds
@@ -69,7 +78,7 @@ function TeacherDashboard() {
       });
   }, [classes.data, effectiveStudentId, myAttendance, subjects.data]);
 
-  if ([assignments.loading, classes.loading, students.loading, subjects.loading, attendance.loading, results.loading].some(Boolean)) {
+  if ([assignments.loading, classes.loading, students.loading, subjects.loading, attendanceForTeacher.loading, resultsForTeacher.loading].some(Boolean)) {
     return <Spinner label="Loading teacher dashboard..." />;
   }
 

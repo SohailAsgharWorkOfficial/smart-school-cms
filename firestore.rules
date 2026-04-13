@@ -21,7 +21,7 @@ service cloud.firestore {
       allow create: if isAdmin() || (isSignedIn() &&
         request.resource.data.userId == request.auth.uid &&
         teacherId == request.auth.uid);
-      allow read: if isAdmin() || (isTeacher() && userDoc().data.linkedProfileId == teacherId);
+      allow read: if isSignedIn();
       allow update, delete: if isAdmin();
     }
 

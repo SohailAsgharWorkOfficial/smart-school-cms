@@ -32,7 +32,10 @@ function AdminAssignmentsPage() {
     });
     return filtered.map((item) => ({ value: item.id, label: `${item.name} (${item.code})` }));
   }, [selectedClassId, subjects.data]);
-  const teacherOptions = useMemo(() => teachers.data.map((item) => ({ value: item.id, label: `${item.firstName} ${item.lastName}` })), [teachers.data]);
+  const teacherOptions = useMemo(
+    () => teachers.data.map((item) => ({ value: item.id, label: `${item.firstName} ${item.lastName}${item.userId ? "" : " (unlinked)"}` })),
+    [teachers.data],
+  );
 
   const openCreate = () => {
     setEditing(null);
@@ -48,11 +51,20 @@ function AdminAssignmentsPage() {
 
   const onSubmit = async (values) => {
     try {
+      const selectedTeacher = teachers.data.find((item) => item.id === values.teacherId);
+      const teacherUserId = selectedTeacher?.userId?.trim() || "";
+      if (!teacherUserId) {
+        throw new Error("Selected teacher is not linked to a user account. Update the teacher record and set 'Linked User ID' (Firebase auth uid) before assigning.");
+      }
+
+      const payload = { ...values, teacherUserId };
       if (editing) {
-        await updateRecord(COLLECTIONS.ASSIGNMENTS, editing.id, values);
+        await updateRecord(COLLECTIONS.ASSIGNMENTS, editing.id, payload);
         toast.success("Assignment updated successfully");
       } else {
-        await createRecord(COLLECTIONS.ASSIGNMENTS, values);
+        const schoolYearSafe = `${values.schoolYear}`.trim().replaceAll("/", "-").replaceAll(" ", "-").toLowerCase();
+        const customId = `assignment-${values.classId}-${values.subjectId}-${schoolYearSafe}`;
+        await createRecord(COLLECTIONS.ASSIGNMENTS, payload, customId);
         toast.success("Assignment created successfully");
       }
       setOpen(false);

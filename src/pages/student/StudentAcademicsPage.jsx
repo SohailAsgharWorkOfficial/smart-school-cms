@@ -2,11 +2,14 @@ import DataTable from "../../components/shared/DataTable";
 import PageHeader from "../../components/shared/PageHeader";
 import Spinner from "../../components/shared/Spinner";
 import StatusBadge from "../../components/shared/StatusBadge";
+import { query, where } from "firebase/firestore";
+import { useCallback } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
 import { gradeFromScore } from "../../utils/formatters";
 import { assessmentLabel, getAssessmentType } from "../../utils/results";
+import { resolveLinkedProfileId } from "../../utils/profile";
 
 function StudentAcademicsPage() {
   const { userProfile } = useAuth();
@@ -14,17 +17,33 @@ function StudentAcademicsPage() {
   const assignments = useCollection(COLLECTIONS.ASSIGNMENTS);
   const subjects = useCollection(COLLECTIONS.SUBJECTS);
   const teachers = useCollection(COLLECTIONS.TEACHERS);
-  const attendance = useCollection(COLLECTIONS.ATTENDANCE);
-  const results = useCollection(COLLECTIONS.RESULTS);
+
+  const studentScopeId = resolveLinkedProfileId(userProfile);
+  const myAttendanceQuery = useCallback(
+    (ref) => query(ref, where("studentId", "==", studentScopeId || "__none__")),
+    [studentScopeId],
+  );
+  const myResultsQuery = useCallback(
+    (ref) => query(ref, where("studentId", "==", studentScopeId || "__none__")),
+    [studentScopeId],
+  );
+  const attendance = useCollection(
+    COLLECTIONS.ATTENDANCE,
+    myAttendanceQuery,
+  );
+  const results = useCollection(
+    COLLECTIONS.RESULTS,
+    myResultsQuery,
+  );
 
   if ([students.loading, assignments.loading, subjects.loading, teachers.loading, attendance.loading, results.loading].some(Boolean)) {
     return <Spinner label="Loading academics..." />;
   }
 
-  const student = students.data.find((item) => item.id === userProfile?.linkedProfileId);
+  const student = students.data.find((item) => item.id === studentScopeId);
   const myAssignments = assignments.data.filter((item) => item.classId === student?.classId);
-  const myAttendance = attendance.data.filter((item) => item.studentId === student?.id);
-  const myResults = results.data.filter((item) => item.studentId === student?.id);
+  const myAttendance = attendance.data;
+  const myResults = results.data;
 
   const subjectRows = myAssignments.map((assignment) => {
     const subject = subjects.data.find((item) => item.id === assignment.subjectId);

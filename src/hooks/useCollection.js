@@ -1,4 +1,4 @@
-import { collection, onSnapshot, query } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { db } from "../firebase/config";
 
@@ -8,8 +8,14 @@ function useCollection(collectionName, buildQuery) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!collectionName) {
+      setError("Invalid collection name");
+      setLoading(false);
+      return () => {};
+    }
+
     const reference = collection(db, collectionName);
-    const preparedQuery = buildQuery ? buildQuery(reference) : query(reference);
+    const preparedQuery = buildQuery ? buildQuery(reference) : reference;
 
     const unsubscribe = onSnapshot(
       preparedQuery,

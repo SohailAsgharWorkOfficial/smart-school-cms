@@ -4,6 +4,7 @@ import Spinner from "../../components/shared/Spinner";
 import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
+import { resolveLinkedProfileId } from "../../utils/profile";
 
 function TeacherClassesPage() {
   const { userProfile } = useAuth();
@@ -16,7 +17,11 @@ function TeacherClassesPage() {
     return <Spinner label="Loading teacher classes..." />;
   }
 
-  const myAssignments = assignments.data.filter((item) => item.teacherId === userProfile?.linkedProfileId);
+  const teacherUid = userProfile?.uid || userProfile?.id || null;
+  const teacherScopeId = resolveLinkedProfileId(userProfile);
+  const myAssignments = assignments.data.filter(
+    (item) => (teacherUid && item.teacherUserId === teacherUid) || (teacherScopeId && item.teacherId === teacherScopeId),
+  );
   const rows = myAssignments.map((assignment) => {
     const classItem = classes.data.find((item) => item.id === assignment.classId);
     const subject = subjects.data.find((item) => item.id === assignment.subjectId);

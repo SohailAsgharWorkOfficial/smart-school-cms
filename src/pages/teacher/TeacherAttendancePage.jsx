@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "react-toastify";
+import { query, where } from "firebase/firestore";
 import AttendanceCalendar from "../../components/shared/AttendanceCalendar";
 import DataTable from "../../components/shared/DataTable";
 import PageHeader from "../../components/shared/PageHeader";
@@ -11,6 +12,7 @@ import useCollection from "../../hooks/useCollection";
 import { ATTENDANCE_OPTIONS } from "../../utils/constants";
 import { formatDate } from "../../utils/formatters";
 import { createRecord } from "../../services/firestoreService";
+import { resolveLinkedProfileId } from "../../utils/profile";
 
 function TeacherAttendancePage() {
   const { userProfile } = useAuth();
@@ -18,15 +20,24 @@ function TeacherAttendancePage() {
   const classes = useCollection(COLLECTIONS.CLASSES);
   const students = useCollection(COLLECTIONS.STUDENTS);
   const subjects = useCollection(COLLECTIONS.SUBJECTS);
-  const attendance = useCollection(COLLECTIONS.ATTENDANCE);
   const [assignmentId, setAssignmentId] = useState("");
   const [dateValue, setDateValue] = useState("");
   const [statusMap, setStatusMap] = useState({});
   const [saving, setSaving] = useState(false);
 
-  const loading = [assignments.loading, classes.loading, students.loading, subjects.loading, attendance.loading].some(Boolean);
+  const teacherUid = userProfile?.uid || userProfile?.id || null;
+  const teacherScopeId = resolveLinkedProfileId(userProfile);
 
-  const myAssignments = assignments.data.filter((item) => item.teacherId === userProfile?.linkedProfileId);
+  const myAttendanceQuery = useCallback(
+    (ref) => query(ref, where("teacherId", "==", teacherScopeId || "__none__")),
+    [teacherScopeId],
+  );
+  const attendance = useCollection(COLLECTIONS.ATTENDANCE, myAttendanceQuery);
+
+  const loading = [assignments.loading, classes.loading, students.loading, subjects.loading, attendance.loading].some(Boolean);
+  const myAssignments = assignments.data.filter(
+    (item) => (teacherUid && item.teacherUserId === teacherUid) || (teacherScopeId && item.teacherId === teacherScopeId),
+  );
   const assignmentOptions = useMemo(() => {
     return myAssignments
       .map((item) => {
@@ -54,12 +65,12 @@ function TeacherAttendancePage() {
     if (!selectedAssignment || !dateValue) return [];
     return attendance.data.filter(
       (item) =>
-        item.teacherId === userProfile?.linkedProfileId &&
+        item.teacherId === teacherScopeId &&
         item.classId === selectedAssignment.classId &&
         item.subjectId === selectedAssignment.subjectId &&
         item.date === dateValue,
     );
-  }, [attendance.data, dateValue, selectedAssignment, userProfile?.linkedProfileId]);
+  }, [attendance.data, dateValue, selectedAssignment, teacherScopeId]);
 
   const loadStatusMap = (nextAssignmentId, nextDate) => {
     const nextAssignment = myAssignments.find((item) => item.id === nextAssignmentId);
@@ -67,7 +78,7 @@ function TeacherAttendancePage() {
     const roster = students.data.filter((item) => item.classId === nextAssignment.classId);
     const existing = attendance.data.filter(
       (item) =>
-        item.teacherId === userProfile?.linkedProfileId &&
+        item.teacherId === teacherScopeId &&
         item.classId === nextAssignment.classId &&
         item.subjectId === nextAssignment.subjectId &&
         item.date === nextDate,
@@ -105,6 +116,7 @@ function TeacherAttendancePage() {
 
   const saveBulkAttendance = async () => {
     try {
+      if (!teacherScopeId) return toast.error("Teacher profile is not linked properly. Please logout/login again or ask admin to relink your account.");
       if (!selectedAssignment) return toast.error("Select a valid assigned class and subject");
       if (!dateValue) return toast.error("Select an attendance date");
       if (!enrolledStudents.length) return toast.error("No students enrolled in this class");
@@ -116,7 +128,7 @@ function TeacherAttendancePage() {
           studentId: student.id,
           classId: selectedAssignment.classId,
           subjectId: selectedAssignment.subjectId,
-          teacherId: userProfile?.linkedProfileId,
+          teacherId: teacherScopeId,
           date: dateValue,
           status,
         };
@@ -141,7 +153,7 @@ function TeacherAttendancePage() {
     return attendance.data
       .filter(
         (item) =>
-          item.teacherId === userProfile?.linkedProfileId &&
+          item.teacherId === teacherScopeId &&
           item.classId === selectedAssignment.classId &&
           item.subjectId === selectedAssignment.subjectId,
       )
@@ -154,17 +166,17 @@ function TeacherAttendancePage() {
           studentName: student ? `${student.firstName} ${student.lastName}` : "N/A",
         };
       });
-  }, [attendance.data, classes.data, selectedAssignment, students.data, subjects.data, userProfile?.linkedProfileId]);
+  }, [attendance.data, classes.data, selectedAssignment, students.data, subjects.data, teacherScopeId]);
 
   const myAttendanceRows = useMemo(() => {
     return attendance.data
-      .filter((item) => item.teacherId === userProfile?.linkedProfileId)
+      .filter((item) => item.teacherId === teacherScopeId)
       .map((entry) => {
         const student = students.data.find((item) => item.id === entry.studentId);
         const subject = subjects.data.find((item) => item.id === entry.subjectId);
         return { ...entry, studentName: student ? `${student.firstName} ${student.lastName}` : "N/A", subjectName: subject?.name ?? "N/A" };
       });
-  }, [attendance.data, students.data, subjects.data, userProfile?.linkedProfileId]);
+  }, [attendance.data, students.data, subjects.data, teacherScopeId]);
 
   if (loading) {
     return <Spinner label="Loading attendance workspace..." />;

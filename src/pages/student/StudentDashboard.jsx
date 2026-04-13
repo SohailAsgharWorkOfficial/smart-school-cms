@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { query, where } from "firebase/firestore";
 import AttendanceCalendar from "../../components/shared/AttendanceCalendar";
 import PageHeader from "../../components/shared/PageHeader";
 import ReportCard from "../../components/shared/ReportCard";
@@ -8,6 +9,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { COLLECTIONS } from "../../firebase/collections";
 import useCollection from "../../hooks/useCollection";
 import { RESULT_ASSESSMENTS } from "../../utils/constants";
+import { resolveLinkedProfileId } from "../../utils/profile";
 
 function StudentDashboard() {
   const { userProfile } = useAuth();
@@ -16,13 +18,22 @@ function StudentDashboard() {
   const assignments = useCollection(COLLECTIONS.ASSIGNMENTS);
   const subjects = useCollection(COLLECTIONS.SUBJECTS);
   const teachers = useCollection(COLLECTIONS.TEACHERS);
-  const attendance = useCollection(COLLECTIONS.ATTENDANCE);
-  const results = useCollection(COLLECTIONS.RESULTS);
   const [assessmentType, setAssessmentType] = useState("midterm");
 
+  const studentScopeId = resolveLinkedProfileId(userProfile);
+  const myAttendanceQuery = useCallback(
+    (ref) => query(ref, where("studentId", "==", studentScopeId || "__none__")),
+    [studentScopeId],
+  );
+  const myResultsQuery = useCallback(
+    (ref) => query(ref, where("studentId", "==", studentScopeId || "__none__")),
+    [studentScopeId],
+  );
+  const attendance = useCollection(COLLECTIONS.ATTENDANCE, myAttendanceQuery);
+  const results = useCollection(COLLECTIONS.RESULTS, myResultsQuery);
   const student = useMemo(
-    () => students.data.find((item) => item.id === userProfile?.linkedProfileId),
-    [students.data, userProfile?.linkedProfileId],
+    () => students.data.find((item) => item.id === studentScopeId),
+    [students.data, studentScopeId],
   );
   const currentClass = useMemo(
     () => classes.data.find((item) => item.id === student?.classId),

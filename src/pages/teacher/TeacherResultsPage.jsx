@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "react-toastify";
+import { query, where } from "firebase/firestore";
 import DataTable from "../../components/shared/DataTable";
 import PageHeader from "../../components/shared/PageHeader";
 import Spinner from "../../components/shared/Spinner";
@@ -11,6 +12,7 @@ import { createRecord } from "../../services/firestoreService";
 import { RESULT_ASSESSMENTS } from "../../utils/constants";
 import { gradeFromScore } from "../../utils/formatters";
 import { assessmentLabel, isAssessmentType, pickLatestResult } from "../../utils/results";
+import { resolveLinkedProfileId } from "../../utils/profile";
 
 function TeacherResultsPage() {
   const { userProfile } = useAuth();
@@ -18,16 +20,24 @@ function TeacherResultsPage() {
   const students = useCollection(COLLECTIONS.STUDENTS);
   const classes = useCollection(COLLECTIONS.CLASSES);
   const subjects = useCollection(COLLECTIONS.SUBJECTS);
-  const results = useCollection(COLLECTIONS.RESULTS);
   const [assignmentId, setAssignmentId] = useState("");
   const [assessmentType, setAssessmentType] = useState("midterm");
   const [totalMarks, setTotalMarks] = useState(100);
   const [scoreMap, setScoreMap] = useState({});
   const [saving, setSaving] = useState(false);
 
-  const loading = [assignments.loading, students.loading, classes.loading, subjects.loading, results.loading].some(Boolean);
+  const teacherUid = userProfile?.uid || userProfile?.id || null;
+  const teacherScopeId = resolveLinkedProfileId(userProfile);
+  const myResultsQuery = useCallback(
+    (ref) => query(ref, where("teacherId", "==", teacherScopeId || "__none__")),
+    [teacherScopeId],
+  );
+  const results = useCollection(COLLECTIONS.RESULTS, myResultsQuery);
 
-  const myAssignments = assignments.data.filter((item) => item.teacherId === userProfile?.linkedProfileId);
+  const loading = [assignments.loading, students.loading, classes.loading, subjects.loading, results.loading].some(Boolean);
+  const myAssignments = assignments.data.filter(
+    (item) => (teacherUid && item.teacherUserId === teacherUid) || (teacherScopeId && item.teacherId === teacherScopeId),
+  );
   const assignmentOptions = useMemo(() => {
     return myAssignments
       .map((item) => {
@@ -52,12 +62,12 @@ function TeacherResultsPage() {
     if (!selectedAssignment) return [];
     return results.data.filter(
       (item) =>
-        item.teacherId === userProfile?.linkedProfileId &&
+        item.teacherId === teacherScopeId &&
         item.classId === selectedAssignment.classId &&
         item.subjectId === selectedAssignment.subjectId &&
         isAssessmentType(item, assessmentType),
     );
-  }, [assessmentType, results.data, selectedAssignment, userProfile?.linkedProfileId]);
+  }, [assessmentType, results.data, selectedAssignment, teacherScopeId]);
 
   const loadScoreMap = (nextAssignmentId, nextAssessmentType) => {
     const assignment = myAssignments.find((item) => item.id === nextAssignmentId);
@@ -66,7 +76,7 @@ function TeacherResultsPage() {
     const roster = students.data.filter((item) => item.classId === assignment.classId);
     const existing = results.data.filter(
       (item) =>
-        item.teacherId === userProfile?.linkedProfileId &&
+        item.teacherId === teacherScopeId &&
         item.classId === assignment.classId &&
         item.subjectId === assignment.subjectId &&
         isAssessmentType(item, nextAssessmentType),
@@ -97,6 +107,7 @@ function TeacherResultsPage() {
 
   const saveBulkResults = async () => {
     try {
+      if (!teacherScopeId) return toast.error("Teacher profile is not linked properly. Please logout/login again or ask admin to relink your account.");
       if (!selectedAssignment) return toast.error("Select a valid assignment");
       if (!enrolledStudents.length) return toast.error("No students enrolled in this class");
       if (!Number.isFinite(Number(totalMarks)) || Number(totalMarks) <= 0) return toast.error("Enter valid total marks");
@@ -112,7 +123,7 @@ function TeacherResultsPage() {
           studentId: student.id,
           classId: selectedAssignment.classId,
           subjectId: selectedAssignment.subjectId,
-          teacherId: userProfile?.linkedProfileId,
+          teacherId: teacherScopeId,
           schoolYear: selectedAssignment.schoolYear ?? null,
           assessmentType,
           examName: assessmentLabel(assessmentType),
@@ -138,7 +149,7 @@ function TeacherResultsPage() {
 
   const myResults = useMemo(() => {
     return results.data
-      .filter((item) => item.teacherId === userProfile?.linkedProfileId)
+      .filter((item) => item.teacherId === teacherScopeId)
       .map((item) => {
         const student = students.data.find((studentValue) => studentValue.id === item.studentId);
         const subject = subjects.data.find((subjectValue) => subjectValue.id === item.subjectId);
@@ -149,7 +160,7 @@ function TeacherResultsPage() {
           assessment: assessmentLabel(item.assessmentType ?? "other"),
         };
       });
-  }, [results.data, students.data, subjects.data, userProfile?.linkedProfileId]);
+  }, [results.data, students.data, subjects.data, teacherScopeId]);
 
   if (loading) {
     return <Spinner label="Loading results workspace..." />;
