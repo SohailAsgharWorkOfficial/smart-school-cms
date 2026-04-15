@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:firestore": "npx firebase-tools deploy --only firestore:rules",
+    "deploy:storage": "npx firebase-tools deploy --only storage",
+    "deploy:rules": "npx firebase-tools deploy --only firestore:rules,storage"
   },
   "dependencies": {
     "date-fns": "^4.1.0",
